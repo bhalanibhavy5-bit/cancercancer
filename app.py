@@ -1,70 +1,144 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
 
-st.set_page_config(page_title="Breast Cancer Predictor", layout="wide")
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.svm import SVC
+
+# ----------------------------------------------------
+# PAGE CONFIG
+# ----------------------------------------------------
+st.set_page_config(
+    page_title="Breast Cancer Diagnosis Predictor",
+    layout="wide"
+)
 
 st.title("🩺 Breast Cancer Diagnosis Prediction App")
-st.write("""
-This app uses a Support Vector Machine (SVC) classifier trained on Principal Components 
-to predict whether a breast mass is **Malignant (M)** or **Benign (B)**.
+
+st.markdown("""
+This application predicts whether a breast tumor is:
+
+- **Malignant (M)**
+- **Benign (B)**
+
+using a Support Vector Machine (SVM) model trained on the Wisconsin Breast Cancer dataset.
 """)
 
-# Load saved models and preprocessing pipelines safely
+# ----------------------------------------------------
+# LOAD DATA & TRAIN MODEL
+# ----------------------------------------------------
 @st.cache_resource
-def load_assets():
-    scaler = joblib.load('models/scaler.joblib')
-    pca = joblib.load('models/pca_transformer.joblib')
-    model = joblib.load('models/svc_model.joblib')
-    return scaler, pca, model
+def train_model():
+
+    df = pd.read_csv("breast-cancer-wisconsin-data.csv")
+
+    # Remove unnamed column if present
+    if "Unnamed: 32" in df.columns:
+        df = df.drop("Unnamed: 32", axis=1)
+
+    # Remove ID column if present
+    if "id" in df.columns:
+        df = df.drop("id", axis=1)
+
+    X = df.drop("diagnosis", axis=1)
+    y = df["diagnosis"]
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    pca = PCA(n_components=10)
+    X_pca = pca.fit_transform(X_scaled)
+
+    model = SVC(
+        kernel="rbf",
+        probability=True,
+        random_state=42
+    )
+
+    model.fit(X_pca, y)
+
+    return scaler, pca, model, X
+
 
 try:
-    scaler, pca, model = load_assets()
+    scaler, pca, model, X_ref = train_model()
+
 except Exception as e:
-    st.error(f"Error loading models: {e}. Please make sure you have executed the previous cells to save the models in the 'models/' folder.")
+    st.error(f"Dataset loading failed: {e}")
     st.stop()
 
-# Feature names matching the original dataset
-feature_names = [
-    'radius_mean', 'texture_mean', 'perimeter_mean', 'area_mean',
-    'smoothness_mean', 'compactness_mean', 'concavity_mean',
-    'concave points_mean', 'symmetry_mean', 'fractal_dimension_mean',
-    'radius_se', 'texture_se', 'perimeter_se', 'area_se', 'smoothness_se',
-    'compactness_se', 'concavity_se', 'concave points_se', 'symmetry_se',
-    'fractal_dimension_se', 'radius_worst', 'texture_worst',
-    'perimeter_worst', 'area_worst', 'smoothness_worst',
-    'compactness_worst', 'concavity_worst', 'concave points_worst',
-    'symmetry_worst', 'fractal_dimension_worst'
-]
+# ----------------------------------------------------
+# INPUT SECTION
+# ----------------------------------------------------
+st.sidebar.header("📋 Input Clinical Features")
 
-st.sidebar.header("🔬 Input Patient Clinical Metrics")
+user_input = {}
 
-# Group inputs dynamically into columns for a better UI layout
-input_data = {}
 cols = st.columns(3)
-for idx, col in enumerate(feature_names):
-    col_target = cols[idx % 3]
-    # Get a reasonable default based on 0 (since data will be scaled)
-    val = col_target.number_input(f"{col.replace('_', ' ').title()}", value=0.0, format="%.4f")
-    input_data[col] = val
 
-if st.button("Run Diagnostic Prediction", type="primary"):
-    # Convert input to DataFrame
-    input_df = pd.DataFrame([input_data])
-    
-    # Preprocess inputs
+for i, feature in enumerate(X_ref.columns):
+
+    col = cols[i % 3]
+
+    default_value = float(X_ref[feature].median())
+
+    value = col.number_input(
+        feature,
+        value=default_value,
+        format="%.4f"
+    )
+
+    user_input[feature] = value
+
+# ----------------------------------------------------
+# PREDICTION
+# ----------------------------------------------------
+if st.button("🔍 Run Prediction"):
+
+    input_df = pd.DataFrame([user_input])
+
     input_scaled = scaler.transform(input_df)
+
     input_pca = pca.transform(input_scaled)
-    
-    # Predict
+
     prediction = model.predict(input_pca)[0]
-    probabilities = getattr(model, "predict_proba", None)
-    
-    st.subheader("Prediction Results")
-    if prediction == 'M':
-        st.error("🚨 **Diagnosis Prediction: Malignant (M)**")
-        st.write("The model suggests a high likelihood that the tumor is malignant.")
+
+    probability = model.predict_proba(input_pca)
+
+    st.subheader("Prediction Result")
+
+    if prediction == "M":
+
+        st.error("🚨 Malignant (M)")
+
+        st.metric(
+            "Probability",
+            f"{probability.max()*100:.2f}%"
+        )
+
+        st.write(
+            "The model predicts that the tumor is likely malignant."
+        )
+
     else:
-        st.success("🟢 **Diagnosis Prediction: Benign (B)**")
-        st.write("The model suggests a high likelihood that the tumor is benign.")
+
+        st.success("✅ Benign (B)")
+
+        st.metric(
+            "Probability",
+            f"{probability.max()*100:.2f}%"
+        )
+
+        st.write(
+            "The model predicts that the tumor is likely benign."
+        )
+
+# ----------------------------------------------------
+# DATA PREVIEW
+# ----------------------------------------------------
+with st.expander("View Dataset"):
+
+    df = pd.read_csv("breast-cancer-wisconsin-data.csv")
+
+    st.dataframe(df.head())
