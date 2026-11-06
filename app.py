@@ -1,16 +1,19 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 
+from sklearn.datasets import load_breast_cancer
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
-# ----------------------------------------------------
+# -----------------------------------
 # PAGE CONFIG
-# ----------------------------------------------------
+# -----------------------------------
 st.set_page_config(
     page_title="Breast Cancer Diagnosis Predictor",
+    page_icon="🩺",
     layout="wide"
 )
 
@@ -22,27 +25,23 @@ This application predicts whether a breast tumor is:
 - **Malignant (M)**
 - **Benign (B)**
 
-using a Support Vector Machine (SVM) model trained on the Wisconsin Breast Cancer dataset.
+using a Support Vector Machine (SVM) model.
 """)
 
-# ----------------------------------------------------
+# -----------------------------------
 # LOAD DATA & TRAIN MODEL
-# ----------------------------------------------------
+# -----------------------------------
 @st.cache_resource
 def train_model():
 
-    df = pd.read_csv("breast-cancer-wisconsin-data - breast-cancer-wisconsin-data.csv")
+    data = load_breast_cancer()
 
-    # Remove unnamed column if present
-    if "Unnamed: 32" in df.columns:
-        df = df.drop("Unnamed: 32", axis=1)
+    X = pd.DataFrame(
+        data.data,
+        columns=data.feature_names
+    )
 
-    # Remove ID column if present
-    if "id" in df.columns:
-        df = df.drop("id", axis=1)
-
-    X = df.drop("diagnosis", axis=1)
-    y = df["diagnosis"]
+    y = pd.Series(data.target)
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -50,53 +49,77 @@ def train_model():
     pca = PCA(n_components=10)
     X_pca = pca.fit_transform(X_scaled)
 
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_pca,
+        y,
+        test_size=0.2,
+        random_state=42
+    )
+
     model = SVC(
         kernel="rbf",
         probability=True,
         random_state=42
     )
 
-    model.fit(X_pca, y)
+    model.fit(X_train, y_train)
 
-    return scaler, pca, model, X
+    accuracy = accuracy_score(
+        y_test,
+        model.predict(X_test)
+    )
+
+    return model, scaler, pca, X, accuracy
 
 
-try:
-    scaler, pca, model, X_ref = train_model()
+model, scaler, pca, X_ref, accuracy = train_model()
 
-except Exception as e:
-    st.error(f"Dataset loading failed: {e}")
-    st.stop()
+# -----------------------------------
+# SIDEBAR
+# -----------------------------------
+st.sidebar.header("Model Information")
+st.sidebar.success(f"Accuracy: {accuracy:.2%}")
 
-# ----------------------------------------------------
-# INPUT SECTION
-# ----------------------------------------------------
-st.sidebar.header("📋 Input Clinical Features")
+st.sidebar.header("Patient Measurements")
 
-user_input = {}
+# -----------------------------------
+# USER INPUTS
+# -----------------------------------
+user_data = {}
 
-cols = st.columns(3)
+col1, col2, col3 = st.columns(3)
 
 for i, feature in enumerate(X_ref.columns):
 
-    col = cols[i % 3]
+    median_value = float(X_ref[feature].median())
 
-    default_value = float(X_ref[feature].median())
+    if i % 3 == 0:
+        user_data[feature] = col1.number_input(
+            feature,
+            value=median_value,
+            format="%.4f"
+        )
 
-    value = col.number_input(
-        feature,
-        value=default_value,
-        format="%.4f"
-    )
+    elif i % 3 == 1:
+        user_data[feature] = col2.number_input(
+            feature,
+            value=median_value,
+            format="%.4f"
+        )
 
-    user_input[feature] = value
+    else:
+        user_data[feature] = col3.number_input(
+            feature,
+            value=median_value,
+            format="%.4f"
+        )
 
-# ----------------------------------------------------
+# -----------------------------------
 # PREDICTION
-# ----------------------------------------------------
-if st.button("🔍 Run Prediction"):
+# -----------------------------------
+if st.button("🔍 Predict Diagnosis"):
 
-    input_df = pd.DataFrame([user_input])
+    input_df = pd.DataFrame([user_data])
 
     input_scaled = scaler.transform(input_df)
 
@@ -104,41 +127,50 @@ if st.button("🔍 Run Prediction"):
 
     prediction = model.predict(input_pca)[0]
 
-    probability = model.predict_proba(input_pca)
+    probability = model.predict_proba(input_pca)[0]
+
+    malignant_prob = probability[0] * 100
+    benign_prob = probability[1] * 100
 
     st.subheader("Prediction Result")
 
-    if prediction == "M":
+    if prediction == 0:
 
-        st.error("🚨 Malignant (M)")
-
-        st.metric(
-            "Probability",
-            f"{probability.max()*100:.2f}%"
-        )
-
-        st.write(
-            "The model predicts that the tumor is likely malignant."
+        st.error(
+            f"🚨 Diagnosis Prediction: MALIGNANT\n\nConfidence: {malignant_prob:.2f}%"
         )
 
     else:
 
-        st.success("✅ Benign (B)")
-
-        st.metric(
-            "Probability",
-            f"{probability.max()*100:.2f}%"
+        st.success(
+            f"✅ Diagnosis Prediction: BENIGN\n\nConfidence: {benign_prob:.2f}%"
         )
 
-        st.write(
-            "The model predicts that the tumor is likely benign."
-        )
+    st.subheader("Probability Distribution")
 
-# ----------------------------------------------------
-# DATA PREVIEW
-# ----------------------------------------------------
-with st.expander("View Dataset"):
+    result_df = pd.DataFrame({
+        "Diagnosis": ["Malignant", "Benign"],
+        "Probability (%)": [malignant_prob, benign_prob]
+    })
 
-    df = pd.read_csv("breast-cancer-wisconsin-data.csv")
+    st.bar_chart(
+        result_df.set_index("Diagnosis")
+    )
 
-    st.dataframe(df.head())
+# -----------------------------------
+# DATASET PREVIEW
+# -----------------------------------
+with st.expander("View Dataset Sample"):
+
+    st.dataframe(
+        X_ref.head(),
+        use_container_width=True
+    )
+
+# -----------------------------------
+# FOOTER
+# -----------------------------------
+st.markdown("---")
+st.caption(
+    "Built with Streamlit, Scikit-Learn, PCA and SVM."
+)
