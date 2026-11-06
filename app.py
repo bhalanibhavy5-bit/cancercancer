@@ -31,7 +31,7 @@ using a Support Vector Machine (SVM) model trained on the Wisconsin Breast Cance
 @st.cache_resource
 def train_model():
 
-    df = pd.read_csv("breast-cancer-wisconsin-data.csv")
+    df = pd.read_csv("breast-cancer-wisconsin-data - breast-cancer-wisconsin-data.csv")
 
     # Remove unnamed column if present
     if "Unnamed: 32" in df.columns:
